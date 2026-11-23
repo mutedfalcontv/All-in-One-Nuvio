@@ -312,6 +312,71 @@ function extractSourceResults($, el) {
     return null;
   });
 }
+function resolveHubCloudFinalUrl(href) {
+  return __async(this, null, function* () {
+    let current = href;
+    try {
+      const parsed = new URL(href);
+      const host = parsed.hostname.toLowerCase();
+      if (!host.includes("hubcloud") && !host.includes("dl.php"))
+        return href;
+    } catch (e) {
+      return href;
+    }
+    for (let hop = 0; hop < 6; hop++) {
+      let resp = null;
+      try {
+        resp = yield fetch(current, { headers: { "User-Agent": USER_AGENT }, redirect: "manual" });
+      } catch (e) {
+        break;
+      }
+      const status = resp.status;
+      let location = null;
+      try {
+        location = resp.headers && resp.headers.get ? resp.headers.get("location") : null;
+      } catch (e) {
+        location = null;
+      }
+      if (status >= 300 && status < 400 && location) {
+        try {
+          current = new URL(location, current).toString();
+        } catch (e) {
+          break;
+        }
+        continue;
+      }
+      try {
+        if (resp.url)
+          current = resp.url;
+      } catch (e) {
+      }
+      break;
+    }
+    if (current === href) {
+      try {
+        const resp = yield fetch(href, { headers: { "User-Agent": USER_AGENT } });
+        yield resp.text();
+        if (resp.url)
+          current = resp.url;
+      } catch (e) {
+        return href;
+      }
+    }
+    const linkMatch = current.match(/[?&]link=(https?[^&]+)/);
+    if (linkMatch) {
+      let link = linkMatch[1];
+      try {
+        link = decodeURIComponent(link);
+      } catch (e) {
+      }
+      if (/^https?:\/\//i.test(link)) {
+        console.log(`[4KHDHub] Resolved redirect wrapper to final direct link`);
+        return link;
+      }
+    }
+    return current;
+  });
+}
 function extractHubCloud(hubCloudUrl, baseMeta) {
   return __async(this, null, function* () {
     if (!hubCloudUrl)
@@ -327,7 +392,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
     if (!linksHtml)
       return [];
     const $ = cheerio2.load(linksHtml);
-    const results = [];
+    const candidates = [];
     const sizeText = $("#size").text();
     const titleText = $("title").text().trim();
     const currentMeta = __spreadProps(__spreadValues({}, baseMeta), {
@@ -339,32 +404,45 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       const href = $(el).attr("href");
       if (!href)
         return;
+      if (href.toLowerCase().includes("pixeldrain")) {
+        console.log(`[4KHDHub] Skipping dead pixeldrain link: ${href}`);
+        return;
+      }
       if (text.includes("10Gbps") || text.includes("PixelServer") || href.includes("hubcloud.cx")) {
-        results.push({
+        candidates.push({
           source: "HubCloud 10Gbps",
           url: href,
           meta: currentMeta
         });
       } else if (text.includes("Download File") || href.includes("r2.dev")) {
-        results.push({
+        candidates.push({
           source: "Direct R2",
           url: href,
           meta: currentMeta
         });
       } else if (text.includes("ZipDisk") || href.includes("workers.dev")) {
-        results.push({
+        candidates.push({
           source: "ZipDisk Server",
           url: href,
           meta: currentMeta
         });
       } else if (text.includes("FSL")) {
-        results.push({
+        candidates.push({
           source: "FSL",
           url: href,
           meta: currentMeta
         });
       }
     });
+    const results = [];
+    for (const candidate of candidates) {
+      try {
+        const resolvedUrl = yield resolveHubCloudFinalUrl(candidate.url);
+        results.push(__spreadProps(__spreadValues({}, candidate), { url: resolvedUrl }));
+      } catch (e) {
+        results.push(candidate);
+      }
+    }
     return results;
   });
 }
