@@ -569,33 +569,44 @@ function getStreams(tmdbId, mediaType, seasonNum = 1, episodeNum = 1) {
           console.log(`[UHDMovies] Gate resolved to: ${String(finalLink).slice(0, 90)}`);
         }
         if (finalLink) {
+          const streamHints = {
+            behaviorHints: {
+              notWebReady: true,
+              proxyHeaders: {
+                request: {
+                  "User-Agent": HEADERS["User-Agent"],
+                  Referer: "https://driveseed.org/"
+                }
+              }
+            }
+          };
           if (finalLink.includes("driveseed") || finalLink.includes("driveleech")) {
             const streams = yield extractDriveseedPage(finalLink);
-            finalResults.push(...streams.map((s) => __spreadProps(__spreadValues({}, s), {
+            finalResults.push(...streams.map((s) => __spreadProps(__spreadValues({}, s), __spreadValues({
               name: "UHDMovies [Driveseed]",
               title: `UHDMovies - ${s.quality} ${s.size ? `[${s.size}]` : ""}`,
               quality: s.quality || item.quality,
               provider: "uhdmovies"
-            })));
+            }, streamHints))));
           } else if (finalLink.includes("video-seed")) {
             const streamUrl = yield extractVideoSeed(finalLink);
             if (streamUrl) {
-              finalResults.push({
+              finalResults.push(__spreadProps(__spreadValues({
                 name: "UHDMovies [VideoSeed]",
                 title: `UHDMovies - ${item.quality}`,
                 url: streamUrl,
                 quality: item.quality,
                 provider: "uhdmovies"
-              });
+              }, streamHints)));
             }
           } else {
-            finalResults.push({
+            finalResults.push(__spreadProps(__spreadValues({
               name: "UHDMovies",
               title: `UHDMovies - ${item.quality}`,
               url: finalLink,
               quality: item.quality,
               provider: "uhdmovies"
-            });
+            }, streamHints)));
           }
         }
       }

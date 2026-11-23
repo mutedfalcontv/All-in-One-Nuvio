@@ -562,7 +562,14 @@ ${formatBytes(link.meta.bytes || 0)}`,
             url: link.url,
             quality: sourceResult.meta.height ? `${sourceResult.meta.height}p` : void 0,
             behaviorHints: {
-              bingeGroup: `4khdhub-${link.source}`
+              bingeGroup: `4khdhub-${link.source}`,
+              notWebReady: true,
+              proxyHeaders: {
+                request: {
+                  "User-Agent": USER_AGENT,
+                  Referer: "https://hubcloud.mov/"
+                }
+              }
             }
           }));
         }
