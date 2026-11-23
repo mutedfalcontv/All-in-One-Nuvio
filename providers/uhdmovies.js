@@ -291,6 +291,133 @@ function extractVideoSeed(finallink) {
     }
   });
 }
+function parseLpForm(html) {
+  const formTag = html.match(/<form[^>]*>/);
+  if (!formTag || !/method=["']?POST/i.test(formTag[0]) || !/lp-/.test(formTag[0]))
+    return null;
+  const action = (formTag[0].match(/action=["']([^'"]*)["']/) || [])[1] || "";
+  const fields = {};
+  const re = /<input[^>]*name=["']([^'"]*)["'][^>]*value=["']([^'"]*)["']/g;
+  let m;
+  while ((m = re.exec(html)) !== null)
+    fields[m[1]] = m[2];
+  if (!Object.keys(fields).length)
+    return null;
+  return { action, fields };
+}
+function captureSetCookies(setCookieHeader, jar) {
+  if (!setCookieHeader)
+    return;
+  setCookieHeader.split(/,(?=[^;]+?=)/).forEach((part) => {
+    const seg = part.split(";")[0];
+    const eq = seg.indexOf("=");
+    if (eq > 0) {
+      const name = seg.slice(0, eq).trim();
+      const value = seg.slice(eq + 1).trim();
+      if (!value || value === "deleted" || value === '""')
+        delete jar[name];
+      else
+        jar[name] = value;
+    }
+  });
+}
+function jarHeader(jar) {
+  return Object.keys(jar).map((k) => k + "=" + jar[k]).join("; ");
+}
+function resolveNaukriGate(startUrl) {
+  return __async(this, null, function* () {
+    const jar = {};
+    let current = startUrl;
+    let postBody = null;
+    try {
+      for (let hop = 0; hop < 12; hop++) {
+        const headers = { "User-Agent": HEADERS["User-Agent"], Referer: current };
+        const cookieHeader = jarHeader(jar);
+        if (cookieHeader)
+          headers.Cookie = cookieHeader;
+        if (postBody != null)
+          headers["Content-Type"] = "application/x-www-form-urlencoded";
+        console.log(`[UHDMovies] Gate hop ${hop}: ${postBody != null ? "POST" : "GET"} ${current.slice(0, 80)}`);
+        const res = yield fetch(current, { method: postBody != null ? "POST" : "GET", headers, body: postBody != null ? postBody : void 0, redirect: "manual" });
+        let scRaw = null;
+        try {
+          scRaw = res.headers && res.headers.get ? res.headers.get("set-cookie") : null;
+          captureSetCookies(scRaw, jar);
+        } catch (e) {
+        }
+        if (res.status >= 300 && res.status < 400) {
+          const loc = res.headers && res.headers.get ? res.headers.get("location") : null;
+          if (loc) {
+            current = new URL(loc, current).toString();
+            postBody = null;
+            continue;
+          }
+        }
+        const html = yield res.text();
+        const form = parseLpForm(html);
+        if (form) {
+          current = new URL(form.action || current, current).toString();
+          postBody = Object.keys(form.fields).map((k) => k + "=" + encodeURIComponent(form.fields[k])).join("&");
+          continue;
+        }
+        const goMatch = html.match(/\?lp_go=(lp-[a-z0-9]+)/);
+        if (goMatch) {
+          const scMatch = html.match(new RegExp("sc\\(\"" + goMatch[1] + "\",\"([^\"]+)\""));
+          if (scMatch)
+            jar[goMatch[1]] = scMatch[1];
+          const goRes = yield fetch(new URL("/?lp_go=" + goMatch[1], current).toString(), { headers: { "User-Agent": HEADERS["User-Agent"], Referer: current, Cookie: jarHeader(jar) }, redirect: "manual" });
+          try {
+            captureSetCookies(goRes.headers && goRes.headers.get ? goRes.headers.get("set-cookie") : null, jar);
+          } catch (e) {
+          }
+          let finalUrl = goRes.headers && goRes.headers.get ? goRes.headers.get("location") : null;
+          const goHtml = yield goRes.text().catch(() => "");
+          if (!finalUrl) {
+            const jred = goHtml.match(/location(?:\.href)?\s*=\s*["']([^"']+)["']/) || goHtml.match(/replace\(\s*["']([^"']+)["']/);
+            if (jred)
+              finalUrl = jred[1].replace(/\\\//g, "/");
+          }
+          if (!finalUrl) {
+            const retryForm = parseLpForm(goHtml);
+            if (retryForm) {
+              current = new URL(retryForm.action || current, current).toString();
+              postBody = Object.keys(retryForm.fields).map((k) => k + "=" + encodeURIComponent(retryForm.fields[k])).join("&");
+              continue;
+            }
+          }
+          if (finalUrl) {
+            let driveUrl = new URL(finalUrl, current).toString().replace("//r?", "/r?");
+            for (let d = 0; d < 4; d++) {
+              if (driveUrl.includes("/file/"))
+                return driveUrl;
+              const dRes = yield fetch(driveUrl, { headers: { "User-Agent": HEADERS["User-Agent"], Referer: current, Cookie: jarHeader(jar) }, redirect: "manual" });
+              if (dRes.status >= 300 && dRes.status < 400) {
+                const dl2 = dRes.headers && dRes.headers.get ? dRes.headers.get("location") : null;
+                if (dl2) {
+                  driveUrl = new URL(dl2, driveUrl).toString();
+                  continue;
+                }
+              }
+              const dHtml = yield dRes.text();
+              const dRed = dHtml.match(/replace\(\s*["']([^"']+)["']/) || dHtml.match(/location(?:\.href)?\s*=\s*["']([^"']+)["']/);
+              if (dRed) {
+                driveUrl = new URL(dRed[1].replace(/\\\//g, "/"), driveUrl).toString();
+                continue;
+              }
+              break;
+            }
+            if (driveUrl.includes("driveseed") || driveUrl.includes("driveleech"))
+              return driveUrl;
+          }
+        }
+        return current;
+      }
+    } catch (e) {
+      console.log(`[UHDMovies] Gate resolution failed: ${e.message || e}`);
+    }
+    return startUrl;
+  });
+}
 function extractDriveseedPage(url) {
   return __async(this, null, function* () {
     const streams = [];
@@ -304,6 +431,7 @@ function extractDriveseedPage(url) {
           pageUrl = fixUrl(redirectMatch[1], getBaseUrl(url));
         }
       }
+      console.log(`[UHDMovies] Driveseed page: ${pageUrl.slice(0, 80)}`);
       const res = yield fetch(pageUrl, { headers: HEADERS });
       const html = yield res.text();
       const $ = import_cheerio_without_node_native.default.load(html);
@@ -320,21 +448,27 @@ function extractDriveseedPage(url) {
         if (text.includes("instant download")) {
           const instantRes = yield fetch(fixUrl(href, baseDomain), { headers: HEADERS, redirect: "follow" });
           if (instantRes.url && instantRes.url.includes("url=")) {
-            streams.push({ name: "Driveseed Instant", url: instantRes.url.split("url=")[1], quality, size });
+            const raw = instantRes.url.split("url=")[1];
+            let decoded = raw;
+            try {
+              decoded = decodeURIComponent(raw);
+            } catch (e) {
+            }
+            streams.push({ name: "Driveseed Instant", url: decoded, quality, size });
           }
         } else if (text.includes("resume cloud")) {
           const cloudRes = yield fetch(fixUrl(href, baseDomain), { headers: HEADERS });
           const cloudHtml = yield cloudRes.text();
           const link = import_cheerio_without_node_native.default.load(cloudHtml)("a.btn-success").first().attr("href");
           if (link)
-            streams.push({ name: "Driveseed Cloud", url: link, quality, size });
+            streams.push({ name: "Driveseed Cloud", url: fixUrl(link, getBaseUrl(cloudRes.url || baseDomain)), quality, size });
         } else if (text.includes("cloud download")) {
           streams.push({ name: "Driveseed Cloud", url: fixUrl(href, baseDomain), quality, size });
         }
       }
     } catch (e) {
     }
-    return streams;
+    return streams.filter((s) => typeof s.url === "string" && s.url.startsWith("http"));
   });
 }
 
@@ -429,6 +563,10 @@ function getStreams(tmdbId, mediaType, seasonNum = 1, episodeNum = 1) {
         let finalLink = item.url;
         if (finalLink.includes("unblockedgames")) {
           finalLink = yield bypassHrefli(finalLink);
+        }
+        if (finalLink.includes("thenaukriadda.in") || finalLink.includes("/?sid=")) {
+          finalLink = yield resolveNaukriGate(finalLink);
+          console.log(`[UHDMovies] Gate resolved to: ${String(finalLink).slice(0, 90)}`);
         }
         if (finalLink) {
           if (finalLink.includes("driveseed") || finalLink.includes("driveleech")) {
