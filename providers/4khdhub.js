@@ -60,6 +60,15 @@ function fetchLatestDomain() {
     return domainCache.url;
   });
 }
+function safeDelay(ms) {
+  return new Promise((resolve) => {
+    if (typeof setTimeout === "function") {
+      setTimeout(resolve, ms);
+    } else {
+      resolve();
+    }
+  });
+}
 function fetchText(_0) {
   return __async(this, arguments, function* (url, options = {}) {
     const retries = options.retries !== void 0 ? options.retries : 2;
@@ -76,7 +85,7 @@ function fetchText(_0) {
         console.log(`[4KHDHub] Request failed for ${url}: ${err.message}${i < retries ? `, retrying (${i + 1}/${retries})...` : ""}`);
       }
       if (i < retries) {
-        yield new Promise((r) => setTimeout(r, delay * Math.pow(2, i)));
+        yield safeDelay(delay * Math.pow(2, i));
       }
     }
     return null;
@@ -443,7 +452,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       } catch (e) {
         results.push(candidate);
       }
-      yield new Promise((r) => setTimeout(r, 300));
+      yield safeDelay(300);
     }
     return results;
   });
