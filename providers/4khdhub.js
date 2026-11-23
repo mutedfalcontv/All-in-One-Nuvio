@@ -323,43 +323,44 @@ function resolveHubCloudFinalUrl(href) {
     } catch (e) {
       return href;
     }
-    for (let hop = 0; hop < 6; hop++) {
-      let resp = null;
-      try {
-        resp = yield fetch(current, { headers: { "User-Agent": USER_AGENT }, redirect: "manual" });
-      } catch (e) {
-        break;
-      }
-      const status = resp.status;
-      let location = null;
-      try {
-        location = resp.headers && resp.headers.get ? resp.headers.get("location") : null;
-      } catch (e) {
-        location = null;
-      }
-      if (status >= 300 && status < 400 && location) {
+    let resp = null;
+    try {
+      resp = yield fetch(href, { headers: { "User-Agent": USER_AGENT } });
+      yield resp.text();
+      if (resp.url)
+        current = resp.url;
+    } catch (e) {
+      resp = null;
+    }
+    if (current === href) {
+      for (let hop = 0; hop < 6; hop++) {
+        let manualResp = null;
         try {
-          current = new URL(location, current).toString();
+          manualResp = yield fetch(current, { headers: { "User-Agent": USER_AGENT }, redirect: "manual" });
         } catch (e) {
           break;
         }
-        continue;
-      }
-      try {
-        if (resp.url)
-          current = resp.url;
-      } catch (e) {
-      }
-      break;
-    }
-    if (current === href) {
-      try {
-        const resp = yield fetch(href, { headers: { "User-Agent": USER_AGENT } });
-        yield resp.text();
-        if (resp.url)
-          current = resp.url;
-      } catch (e) {
-        return href;
+        const status = manualResp.status;
+        let location = null;
+        try {
+          location = manualResp.headers && manualResp.headers.get ? manualResp.headers.get("location") : null;
+        } catch (e) {
+          location = null;
+        }
+        if (status >= 300 && status < 400 && location) {
+          try {
+            current = new URL(location, current).toString();
+          } catch (e) {
+            break;
+          }
+          continue;
+        }
+        try {
+          if (manualResp.url)
+            current = manualResp.url;
+        } catch (e) {
+        }
+        break;
       }
     }
     const linkMatch = current.match(/[?&]link=(https?[^&]+)/);
@@ -442,6 +443,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       } catch (e) {
         results.push(candidate);
       }
+      yield new Promise((r) => setTimeout(r, 300));
     }
     return results;
   });
