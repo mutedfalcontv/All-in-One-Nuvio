@@ -454,7 +454,24 @@ function extractDriveseedPage(url) {
               decoded = decodeURIComponent(raw);
             } catch (e) {
             }
-            streams.push({ name: "Driveseed Instant", url: decoded, quality, size });
+            if (instantRes.url.includes("video-seed") || instantRes.url.includes("video-gen")) {
+              const fresh = yield extractVideoSeed(instantRes.url);
+              if (fresh) {
+                console.log(`[UHDMovies] Fresh link via video-seed API: ${fresh.slice(0, 70)}`);
+                decoded = fresh;
+              }
+            }
+            let alive = false;
+            try {
+              const probe = yield fetch(decoded, { headers: { "User-Agent": HEADERS["User-Agent"], Range: "bytes=0-1023" }, redirect: "follow" });
+              alive = probe.status === 200 || probe.status === 206;
+              if (!alive)
+                console.log(`[UHDMovies] Dropping dead link (HTTP ${probe.status}): ${decoded.slice(0, 70)}`);
+            } catch (e) {
+              console.log(`[UHDMovies] Dropping unreachable link: ${decoded.slice(0, 70)}`);
+            }
+            if (alive)
+              streams.push({ name: "Driveseed Instant", url: decoded, quality, size });
           }
         } else if (text.includes("resume cloud")) {
           const cloudRes = yield fetch(fixUrl(href, baseDomain), { headers: HEADERS });
